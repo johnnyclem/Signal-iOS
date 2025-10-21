@@ -7,8 +7,10 @@ public import AVFoundation
 import CoreMotion
 import CoreServices
 import Foundation
+import ImageIO
 import SignalServiceKit
 import SignalUI
+import UniformTypeIdentifiers
 public import UIKit
 
 enum PhotoCaptureError: Error {
@@ -1552,6 +1554,7 @@ private class PhotoCapture {
 
         private func crop(photoData: Data, to outputRect: CGRect) throws -> Data {
             guard
+                let imageSource = CGImageSourceCreateWithData(photoData as CFData, nil),
                 let originalImage = UIImage(data: photoData),
                 let cgImage = originalImage.cgImage
             else {
@@ -1564,16 +1567,81 @@ private class PhotoCapture {
 
             let width = CGFloat(cgImage.width)
             let height = CGFloat(cgImage.height)
-            let cropRect = CGRect(x: outputRect.origin.x * width,
-                                  y: outputRect.origin.y * height,
-                                  width: outputRect.size.width * width,
-                                  height: outputRect.size.height * height)
-            let croppedCGImage = cgImage.cropping(to: cropRect)!
-            let croppedUIImage = UIImage(cgImage: croppedCGImage, scale: 1, orientation: originalImage.imageOrientation)
-            guard let croppedData = croppedUIImage.jpegData(compressionQuality: 0.9) else {
-                throw OWSAssertionError("croppedData was unexpectedly nil")
+            let cropRect = CGRect(
+                x: outputRect.origin.x * width,
+                y: outputRect.origin.y * height,
+                width: outputRect.size.width * width,
+                height: outputRect.size.height * height
+            )
+
+            guard let croppedCGImage = cgImage.cropping(to: cropRect) else {
+                throw OWSAssertionError("croppedCGImage was unexpectedly nil")
             }
-            return croppedData
+
+            let croppedUIImage = UIImage(
+                cgImage: croppedCGImage,
+                scale: 1,
+                orientation: originalImage.imageOrientation
+            )
+
+            let metadataOptions: [CFString: Any] = [
+                kCGImageSourceShouldCache: false
+            ]
+            var metadata = CGImageSourceCopyPropertiesAtIndex(
+                imageSource,
+                0,
+                metadataOptions as CFDictionary
+            ) as? [String: Any] ?? [:]
+
+            metadata[kCGImagePropertyPixelWidth as String] = croppedCGImage.width
+            metadata[kCGImagePropertyPixelHeight as String] = croppedCGImage.height
+            metadata[kCGImagePropertyOrientation as String] = croppedUIImage.imageOrientation.cgImagePropertyOrientation.rawValue
+
+            var destinationProperties = metadata
+            destinationProperties[kCGImageDestinationLossyCompressionQuality as String] = 0.9
+
+            let destinationData = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(
+                destinationData,
+                UTType.jpeg.identifier as CFString,
+                1,
+                nil
+            ) else {
+                throw OWSAssertionError("Could not create CGImageDestination")
+            }
+
+            CGImageDestinationAddImage(destination, croppedCGImage, destinationProperties as CFDictionary)
+            guard CGImageDestinationFinalize(destination) else {
+                throw OWSAssertionError("Could not finalize image destination")
+            }
+
+            return destinationData as Data
+        }
+    }
+}
+
+private extension UIImage.Orientation {
+    var cgImagePropertyOrientation: CGImagePropertyOrientation {
+        switch self {
+        case .up:
+            return .up
+        case .down:
+            return .down
+        case .left:
+            return .left
+        case .right:
+            return .right
+        case .upMirrored:
+            return .upMirrored
+        case .downMirrored:
+            return .downMirrored
+        case .leftMirrored:
+            return .leftMirrored
+        case .rightMirrored:
+            return .rightMirrored
+        @unknown default:
+            owsFailDebug("Unhandled UIImage.Orientation: \(self)")
+            return .up
         }
     }
 }
