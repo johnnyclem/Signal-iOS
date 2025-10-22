@@ -684,6 +684,10 @@ internal struct MediaGallerySections<Loader: MediaGallerySectionLoader, UpdateUs
                         numNewlyLoadedLaterSections += loadLaterSections(batchSize: naiveRange.range.count,
                                                                          transaction: transaction)
                         if currentSectionIndex >= itemsBySection.count {
+                            if hasFetchedMostRecent {
+                                owsAssertDebug(false, "ignoring attachment #\(i) \(resourceId) beyond the last section")
+                                return
+                            }
                             owsFailDebug("attachment #\(i) \(resourceId) is beyond the last section")
                             return
                         }
