@@ -15,6 +15,7 @@ protocol MediaGalleryPrimaryViewController: UIViewController {
     func disableFiltering()
     func batchSelectionModeDidChange(isInBatchSelectMode: Bool)
     func selectAll()
+    func cancelSelectAllInProgress()
     func didEndSelectMode()
     func deleteSelectedItems()
     func shareSelectedItems(_ sender: Any)
@@ -46,6 +47,16 @@ public class MediaGalleryAccessoriesHelper {
         }
     }
 
+    private enum SelectAllProgressState: Equatable {
+        case idle
+        case inProgress(selected: Int, total: Int)
+
+        var isInProgress: Bool {
+            if case .inProgress = self { return true }
+            return false
+        }
+    }
+
     private var lastUsedLayoutMap = [AllMediaCategory: Layout]()
     private var _layout = Layout.grid
     private var layout: Layout {
@@ -63,6 +74,17 @@ public class MediaGalleryAccessoriesHelper {
                 viewController.set(mediaCategory: viewController.mediaCategory, isGridLayout: false)
             case .grid:
                 viewController.set(mediaCategory: viewController.mediaCategory, isGridLayout: true)
+            }
+        }
+    }
+
+    private var selectAllProgressState: SelectAllProgressState = .idle {
+        didSet {
+            guard selectAllProgressState != oldValue else { return }
+            updateSelectAllProgressUI()
+            if selectAllProgressState.isInProgress != oldValue.isInProgress {
+                updateBottomToolbarControls()
+                updateSelectionModeControls()
             }
         }
     }
@@ -114,6 +136,10 @@ public class MediaGalleryAccessoriesHelper {
         footerBar.tintColor = Theme.primaryIconColor
         deleteButton.tintColor = Theme.primaryIconColor
         shareButton.tintColor = Theme.primaryIconColor
+        cancelSelectAllButton.tintColor = Theme.primaryIconColor
+        selectAllProgressLabel.textColor = UIColor(dynamicProvider: { _ in Theme.primaryTextColor })
+        selectAllProgressView.progressTintColor = .ows_accentBlue
+        selectAllProgressView.trackTintColor = Theme.isDarkThemeEnabled ? .ows_gray90 : .ows_gray05
     }
 
     @objc
@@ -150,6 +176,10 @@ public class MediaGalleryAccessoriesHelper {
     var isInBatchSelectMode = false {
         didSet {
             guard isInBatchSelectMode != oldValue else { return }
+
+            if !isInBatchSelectMode {
+                selectAllProgressState = .idle
+            }
 
             viewController?.batchSelectionModeDidChange(isInBatchSelectMode: isInBatchSelectMode)
             updateFooterBarState()
@@ -190,6 +220,7 @@ public class MediaGalleryAccessoriesHelper {
                 action: { [weak self] in
                     self?.didSelectAll()
                 })
+            viewController.navigationItem.leftBarButtonItem?.isEnabled = !selectAllProgressState.isInProgress
         } else {
             viewController.navigationItem.rightBarButtonItem = nil // TODO: Search
             viewController.navigationItem.leftBarButtonItem = previousLeftBarButtonItem
@@ -213,8 +244,8 @@ public class MediaGalleryAccessoriesHelper {
     }
 
     private func didSelectAll() {
-        self.viewController?.selectAll()
-        self.didModifySelection()
+        guard !selectAllProgressState.isInProgress else { return }
+        viewController?.selectAll()
     }
 
     // Call this to exit select mode, for example after completing a deletion.
@@ -352,7 +383,11 @@ public class MediaGalleryAccessoriesHelper {
             case .hidden:
                 return nil
             case .selection:
-                return [ shareButton, .flexibleSpace(), selectionInfoButton, .flexibleSpace(), deleteButton ]
+                if selectAllProgressState.isInProgress {
+                    return [ cancelSelectAllButton, .flexibleSpace(), selectAllProgressItem ]
+                } else {
+                    return [ shareButton, .flexibleSpace(), selectionInfoButton, .flexibleSpace(), deleteButton ]
+                }
             case .regular:
                 let firstItem: UIBarButtonItem
                 if mediaCategory.supportsGridView {
@@ -482,6 +517,117 @@ public class MediaGalleryAccessoriesHelper {
     private func didPressShare(_ sender: Any) {
         Logger.debug("")
         viewController?.shareSelectedItems(sender)
+    }
+
+    // MARK: - Select All Progress
+
+    private lazy var cancelSelectAllButton = UIBarButtonItem(
+        title: CommonStrings.cancelButton,
+        style: .plain,
+        target: self,
+        action: #selector(didTapCancelSelectAllProgress)
+    )
+
+    private lazy var selectAllProgressLabel: UILabel = {
+        let label = UILabel()
+        label.textAlignment = .center
+        label.textColor = UIColor(dynamicProvider: { _ in Theme.primaryTextColor })
+        label.font = .dynamicTypeSubheadlineClamped.semibold()
+        label.adjustsFontForContentSizeCategory = true
+        return label
+    }()
+
+    private lazy var selectAllProgressView: UIProgressView = {
+        let view = UIProgressView()
+        view.progressTintColor = .ows_accentBlue
+        view.trackTintColor = Theme.isDarkThemeEnabled ? .ows_gray90 : .ows_gray05
+        view.autoSetDimension(.height, toSize: 2)
+        return view
+    }()
+
+    private lazy var selectAllProgressItem: UIBarButtonItem = {
+        let stackView = UIStackView(arrangedSubviews: [selectAllProgressLabel, selectAllProgressView])
+        stackView.axis = .vertical
+        stackView.spacing = 8
+        let container = UIView()
+        container.addSubview(stackView)
+        stackView.autoPinEdgesToSuperviewEdges(with: UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12))
+        container.isAccessibilityElement = true
+        container.accessibilityTraits = [.updatesFrequently, .staticText]
+        container.accessibilityLabel = OWSLocalizedString(
+            "ALL_MEDIA_SELECT_ALL_PROGRESS_ACCESSIBILITY_LABEL",
+            comment: "Accessibility label for the select all progress indicator in the all media view."
+        )
+        return UIBarButtonItem(customView: container)
+    }()
+
+    func beginSelectAllProgress(totalCount: Int) {
+        guard totalCount > 0 else {
+            selectAllProgressState = .idle
+            return
+        }
+        selectAllProgressState = .inProgress(selected: 0, total: totalCount)
+    }
+
+    func updateSelectAllProgress(selectedCount: Int, totalCount: Int) {
+        guard totalCount > 0 else {
+            selectAllProgressState = .idle
+            return
+        }
+        let clampedSelected = max(0, min(selectedCount, totalCount))
+        selectAllProgressState = .inProgress(selected: clampedSelected, total: totalCount)
+    }
+
+    func finishSelectAllProgress() {
+        guard selectAllProgressState.isInProgress else { return }
+        selectAllProgressState = .idle
+        updateSelectionInfoLabel()
+        updateDeleteButton()
+        updateShareButton()
+    }
+
+    func cancelSelectAllProgress() {
+        if selectAllProgressState.isInProgress {
+            selectAllProgressState = .idle
+        }
+        updateSelectionInfoLabel()
+        updateDeleteButton()
+        updateShareButton()
+    }
+
+    private func updateSelectAllProgressUI() {
+        switch selectAllProgressState {
+        case .idle:
+            selectAllProgressLabel.text = ""
+            selectAllProgressView.setProgress(0, animated: false)
+            selectAllProgressItem.customView?.accessibilityValue = nil
+        case .inProgress(let selected, let total):
+            let totalCount = max(total, 1)
+            let fraction = Float(Double(selected) / Double(totalCount))
+            selectAllProgressView.setProgress(fraction, animated: true)
+            selectAllProgressLabel.text = String.localizedStringWithFormat(
+                OWSLocalizedString(
+                    "ALL_MEDIA_SELECT_ALL_PROGRESS_LABEL",
+                    comment: "Label describing the select all progress in the all media view."
+                ),
+                selected,
+                total
+            )
+            selectAllProgressItem.customView?.accessibilityValue = String.localizedStringWithFormat(
+                OWSLocalizedString(
+                    "ALL_MEDIA_SELECT_ALL_PROGRESS_ACCESSIBILITY_VALUE",
+                    comment: "Accessibility value describing the select all progress in the all media view."
+                ),
+                selected,
+                total
+            )
+        }
+        selectAllProgressItem.customView?.sizeToFit()
+    }
+
+    @objc
+    private func didTapCancelSelectAllProgress() {
+        viewController?.cancelSelectAllInProgress()
     }
 
     // MARK: - Selection Info

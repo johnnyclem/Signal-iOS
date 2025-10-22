@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
+import Combine
 import Foundation
 import SignalServiceKit
 import SignalUI
@@ -77,6 +78,18 @@ class MediaTileViewController: UICollectionViewController, MediaGalleryDelegate,
         }
     }
 
+    private enum SharePreparationError: LocalizedError {
+        case unsupportedAttachment
+        case preparationFailed
+
+        var errorDescription: String? {
+            OWSLocalizedString(
+                "ALL_MEDIA_SHARE_PREPARATION_FAILED",
+                comment: "Error message shown when preparing media for sharing fails in the All Media view"
+            )
+        }
+    }
+
     private let thread: TSThread
     private let accessoriesHelper: MediaGalleryAccessoriesHelper
     private let spoilerState: SpoilerRenderState
@@ -88,6 +101,10 @@ class MediaTileViewController: UICollectionViewController, MediaGalleryDelegate,
     }()
     private var currentCollectionViewLayout: CollectionViewLayout
     private var allCells = WeakArray<UICollectionViewCell>()
+    private let selectionCoordinator = MediaSelectionCoordinator<IndexPath>()
+    private var selectionCoordinatorCancellable: AnyCancellable?
+    private var isSelectAllTaskRunning = false
+    private var selectAllInitialSelection = Set<IndexPath>()
 
     internal var mediaCategory: AllMediaCategory = .defaultValue
     private var layout = Layout.grid
@@ -219,6 +236,144 @@ class MediaTileViewController: UICollectionViewController, MediaGalleryDelegate,
 
     // MARK: View Lifecycle Overrides
 
+    private func configureSelectionCoordinator() {
+        selectionCoordinatorCancellable = selectionCoordinator.statePublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in
+                self?.handleSelectAllState(state)
+            }
+    }
+
+    private func handleSelectAllState(_ state: MediaSelectionCoordinator<IndexPath>.State) {
+        switch state {
+        case .idle:
+            break
+        case .inProgress(let progress):
+            accessoriesHelper.updateSelectAllProgress(
+                selectedCount: progress.selectedCount,
+                totalCount: progress.totalCount
+            )
+        case .finished:
+            isSelectAllTaskRunning = false
+            selectAllInitialSelection.removeAll()
+            accessoriesHelper.finishSelectAllProgress()
+            accessoriesHelper.didModifySelection()
+        case .cancelled:
+            let previousSelection = selectAllInitialSelection
+            isSelectAllTaskRunning = false
+            selectAllInitialSelection.removeAll()
+            restoreSelection(previousSelection: previousSelection)
+            accessoriesHelper.cancelSelectAllProgress()
+            accessoriesHelper.didModifySelection()
+        }
+    }
+
+    private func restoreSelection(previousSelection: Set<IndexPath>) {
+        guard let collectionView else { return }
+        let currentlySelected = collectionView.indexPathsForSelectedItems ?? []
+        currentlySelected.forEach { collectionView.deselectItem(at: $0, animated: false) }
+        previousSelection.sorted { lhs, rhs in
+            if lhs.section == rhs.section {
+                return lhs.item < rhs.item
+            }
+            return lhs.section < rhs.section
+        }.forEach { indexPath in
+            collectionView.selectItem(at: indexPath, animated: false, scrollPosition: [])
+        }
+    }
+
+    private func prepareShareableAttachments(
+        from streams: [ReferencedAttachmentStream],
+        modal: ModalActivityIndicatorViewController
+    ) async throws -> [ShareableAttachment] {
+        guard !streams.isEmpty else { return [] }
+
+        let metadata = buildShareMetadata(for: streams)
+        var results = Array<ShareableAttachment?>(repeating: nil, count: streams.count)
+        let maxConcurrent = 4
+
+        try await withThrowingTaskGroup(of: (Int, ShareableAttachment).self) { group in
+            var iterator = streams.enumerated().makeIterator()
+
+            func enqueue(_ element: (offset: Int, element: ReferencedAttachmentStream)) {
+                let index = element.offset
+                let stream = element.element
+                let shareType = metadata.shareTypes[index]
+                let filename = metadata.filenames[index]
+                group.addTask(priority: .utility) {
+                    if Task.isCancelled {
+                        throw CancellationError()
+                    }
+                    guard let attachment = try ShareableAttachment(
+                        stream.attachmentStream,
+                        sourceFilename: filename,
+                        shareType: shareType
+                    ) else {
+                        throw SharePreparationError.unsupportedAttachment
+                    }
+                    return (index, attachment)
+                }
+            }
+
+            for _ in 0..<min(maxConcurrent, streams.count) {
+                if let element = iterator.next() {
+                    enqueue(element)
+                }
+            }
+
+            while let (index, attachment) = try await group.next() {
+                if modal.wasCancelled {
+                    group.cancelAll()
+                    throw CancellationError()
+                }
+                results[index] = attachment
+                if let next = iterator.next() {
+                    enqueue(next)
+                }
+            }
+        }
+
+        if modal.wasCancelled {
+            throw CancellationError()
+        }
+
+        guard results.count == streams.count, results.allSatisfy({ $0 != nil }) else {
+            throw SharePreparationError.preparationFailed
+        }
+
+        return results.compactMap { $0 }
+    }
+
+    private func buildShareMetadata(
+        for streams: [ReferencedAttachmentStream]
+    ) -> (shareTypes: [ShareableAttachment.ShareType], filenames: [String?]) {
+        var shareTypes = [ShareableAttachment.ShareType]()
+        shareTypes.reserveCapacity(streams.count)
+        var filenames = [String?]()
+        filenames.reserveCapacity(streams.count)
+        var existingFilenames = Set<String>()
+        var hadUrlType = false
+
+        for stream in streams {
+            let shareType = ShareableAttachment.shareType(stream.attachmentStream)
+            if shareType == .decryptedFileURL {
+                hadUrlType = true
+            }
+            shareTypes.append(shareType)
+            let filename = AttachmentSaving.uniqueFilename(
+                sourceFilename: stream.reference.sourceFilename,
+                existingFilenames: &existingFilenames
+            )
+            filenames.append(filename)
+        }
+
+        if hadUrlType {
+            shareTypes = Array(repeating: .decryptedFileURL, count: shareTypes.count)
+        }
+
+        return (shareTypes, filenames)
+    }
+
     override func loadView() {
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: collectionViewLayout)
     }
@@ -253,6 +408,7 @@ class MediaTileViewController: UICollectionViewController, MediaGalleryDelegate,
         collectionView.backgroundColor = UIColor(dynamicProvider: { _ in Theme.tableView2PresentedBackgroundColor })
 
         accessoriesHelper.installViews()
+        configureSelectionCoordinator()
 
         NotificationCenter.default.addObserver(self, selector: #selector(contentSizeCategoryDidChange), name: UIContentSizeCategory.didChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(applyTheme), name: .themeDidChange, object: nil)
@@ -1560,17 +1716,35 @@ extension MediaTileViewController: MediaGalleryPrimaryViewController {
     }
 
     func selectAll() {
-        let scrollPosition = collectionView.contentOffset
-        for section in 0..<collectionView.numberOfSections {
-            for index in 0..<collectionView.numberOfItems(inSection: section) {
-                collectionView.selectItem(
-                    at: IndexPath(item: index, section: section),
-                    animated: false,
-                    scrollPosition: []
-                )
+        guard !isSelectAllTaskRunning else { return }
+        guard let collectionView else { return }
+
+        let sectionCount = collectionView.numberOfSections
+        guard sectionCount > 0 else { return }
+
+        var indexPaths = [IndexPath]()
+        for section in 0..<sectionCount {
+            let itemCount = collectionView.numberOfItems(inSection: section)
+            guard itemCount > 0 else { continue }
+            for item in 0..<itemCount {
+                indexPaths.append(IndexPath(item: item, section: section))
             }
         }
-        collectionView.setContentOffset(scrollPosition, animated: false)
+
+        guard !indexPaths.isEmpty else { return }
+
+        isSelectAllTaskRunning = true
+        selectAllInitialSelection = Set(collectionView.indexPathsForSelectedItems ?? [])
+        accessoriesHelper.beginSelectAllProgress(totalCount: indexPaths.count)
+        selectionCoordinator.selectAll(items: indexPaths) { [weak self] indexPath in
+            guard let self, let collectionView = self.collectionView else { return }
+            collectionView.selectItem(at: indexPath, animated: false, scrollPosition: [])
+        }
+    }
+
+    func cancelSelectAllInProgress() {
+        guard isSelectAllTaskRunning else { return }
+        selectionCoordinator.cancel()
     }
 
     var mediaGalleryFilterMenuItems: [MediaGalleryAccessoriesHelper.MenuItem] {
@@ -1708,7 +1882,13 @@ extension MediaTileViewController: MediaGalleryPrimaryViewController {
 
     func didEndSelectMode() {
         // deselect any selected
-        collectionView.indexPathsForSelectedItems?.forEach { collectionView.deselectItem(at: $0, animated: false)}
+        if isSelectAllTaskRunning {
+            selectionCoordinator.cancel()
+        } else {
+            accessoriesHelper.cancelSelectAllProgress()
+            selectAllInitialSelection.removeAll()
+        }
+        collectionView.indexPathsForSelectedItems?.forEach { collectionView.deselectItem(at: $0, animated: false) }
     }
 
     func deleteSelectedItems() {
@@ -1762,21 +1942,39 @@ extension MediaTileViewController: MediaGalleryPrimaryViewController {
     }
 
     func shareSelectedItems(_ sender: Any) {
-        guard let indexPaths = collectionView.indexPathsForSelectedItems else {
+        guard !isSelectAllTaskRunning else { return }
+        guard let collectionView else { return }
+        guard let indexPaths = collectionView.indexPathsForSelectedItems, !indexPaths.isEmpty else {
             owsFailDebug("indexPaths was unexpectedly nil")
             return
         }
 
-        let attachments = indexPaths.compactMap {
-            self.galleryItem(at: $0)?.attachmentStream
-        }
-        let items: [ShareableAttachment] = (try? attachments.asShareableAttachments()) ?? []
-        guard items.count == indexPaths.count else {
-            owsFailDebug("trying to delete an item that never loaded")
+        let attachmentStreams = indexPaths.compactMap { self.galleryItem(at: $0)?.attachmentStream }
+        guard attachmentStreams.count == indexPaths.count else {
+            owsFailDebug("trying to share an item that never loaded")
             return
         }
 
-        AttachmentSharing.showShareUI(for: items, sender: sender)
+        ModalActivityIndicatorViewController.present(fromViewController: self, canCancel: true) { [weak self] modal in
+            guard let self else { return }
+            do {
+                let shareableAttachments = try await self.prepareShareableAttachments(
+                    from: attachmentStreams,
+                    modal: modal
+                )
+                guard !modal.wasCancelled else { return }
+                modal.dismissIfNotCanceled {
+                    AttachmentSharing.showShareUI(for: shareableAttachments, sender: sender)
+                }
+            } catch is CancellationError {
+                modal.dismiss()
+            } catch {
+                Logger.error("Failed to prepare shareable attachments: \(error)")
+                modal.dismissIfNotCanceled {
+                    OWSActionSheets.showErrorAlert(message: error.localizedDescription)
+                }
+            }
+        }
     }
 }
 
