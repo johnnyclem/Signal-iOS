@@ -390,6 +390,10 @@ class CameraCaptureSession: NSObject {
     }
 
     private func updateOrientation(_ orientation: AVCaptureVideoOrientation) {
+        handleOrientationChange(orientation)
+    }
+
+    private func handleOrientationChange(_ orientation: AVCaptureVideoOrientation) {
         sessionQueue.async {
             guard orientation != self.captureOrientation else {
                 return
@@ -402,6 +406,10 @@ class CameraCaptureSession: NSObject {
                 self.delegate?.cameraCaptureSession(self, didChangeOrientation: orientation)
             }
         }
+    }
+
+    func setCaptureOrientation(_ orientation: AVCaptureVideoOrientation) {
+        handleOrientationChange(orientation)
     }
 
     // MARK: - Camera Device Information

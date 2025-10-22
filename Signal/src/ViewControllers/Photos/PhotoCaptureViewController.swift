@@ -121,8 +121,13 @@ class PhotoCaptureViewController: OWSViewController, OWSNavigationChildControlle
         delegate?.photoCaptureViewControllerViewWillAppear(self)
 
         let previewOrientation: AVCaptureVideoOrientation
-        if UIDevice.current.isIPad, let windowScene = view.window?.windowScene {
-            previewOrientation = AVCaptureVideoOrientation(interfaceOrientation: windowScene.interfaceOrientation) ?? .portrait
+        if UIDevice.current.isIPad {
+            let interfaceOrientation = view.window?.windowScene?.interfaceOrientation
+                ?? navigationController?.view.window?.windowScene?.interfaceOrientation
+                ?? CurrentAppContext().mainWindow?.windowScene?.interfaceOrientation
+                ?? .unknown
+            previewOrientation = AVCaptureVideoOrientation(interfaceOrientation: interfaceOrientation) ?? .portrait
+            cameraCaptureSession.setCaptureOrientation(previewOrientation)
         } else {
             previewOrientation = .portrait
         }
