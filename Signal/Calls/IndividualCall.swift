@@ -245,7 +245,7 @@ public class IndividualCall: CustomDebugStringConvertible {
         }
     }
 
-    private(set) lazy var videoCaptureController = VideoCaptureController()
+    private(set) lazy var videoCaptureController = VideoCaptureController.makeSignalOptimized()
 
     // MARK: Initializers and Factory Methods
 

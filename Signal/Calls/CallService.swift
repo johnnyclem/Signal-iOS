@@ -412,7 +412,7 @@ final class CallService: CallServiceStateObserver, CallServiceStateDelegate {
     }
 
     func updateCameraSource(call: SignalCall, isUsingFrontCamera: Bool) {
-        call.videoCaptureController.switchCamera(isUsingFrontCamera: isUsingFrontCamera)
+        call.videoCaptureController.switchCameraAndOptimize(isUsingFrontCamera: isUsingFrontCamera)
     }
 
     private func configureDataMode() {
@@ -522,24 +522,24 @@ final class CallService: CallServiceStateObserver, CallServiceStateDelegate {
         switch call.mode {
         case .individual(let individualCall):
             if individualCall.isEnded {
-                individualCall.videoCaptureController.stopCapture()
+                individualCall.videoCaptureController.signalStopCapture()
             } else if individualCall.state == .connected || individualCall.state == .reconnecting {
                 callManager.setLocalVideoEnabled(enabled: shouldHaveLocalVideoTrack, call: call)
             } else if individualCall.isViewLoaded, individualCall.hasLocalVideo, !Platform.isSimulator {
                 // If we're not yet connected, just enable the camera but don't tell RingRTC
                 // to start sending video. This allows us to show a "vanity" view while connecting.
-                individualCall.videoCaptureController.startCapture()
+                individualCall.videoCaptureController.signalStartCapture()
             } else {
-                individualCall.videoCaptureController.stopCapture()
+                individualCall.videoCaptureController.signalStopCapture()
             }
         case .groupThread(let call as GroupCall), .callLink(let call as GroupCall):
             if call.shouldTerminateOnEndEvent {
-                call.videoCaptureController.stopCapture()
+                call.videoCaptureController.signalStopCapture()
             } else {
                 if shouldHaveLocalVideoTrack {
-                    call.videoCaptureController.startCapture()
+                    call.videoCaptureController.signalStartCapture()
                 } else {
-                    call.videoCaptureController.stopCapture()
+                    call.videoCaptureController.signalStopCapture()
                 }
             }
         }
@@ -549,7 +549,7 @@ final class CallService: CallServiceStateObserver, CallServiceStateDelegate {
 
     func buildAndConnectGroupCall(for groupId: GroupIdentifier, isVideoMuted: Bool) -> (SignalCall, GroupThreadCall)? {
         return _buildAndConnectGroupCall(isOutgoingVideoMuted: isVideoMuted) { () -> (SignalCall, GroupThreadCall)? in
-            let videoCaptureController = VideoCaptureController()
+            let videoCaptureController = VideoCaptureController.makeSignalOptimized()
             let sfuUrl = DebugFlags.callingUseTestSFU.get() ? TSConstants.sfuTestURL : TSConstants.sfuURL
             let ringRtcCall = callManager.createGroupCall(
                 groupId: groupId.serialize(),
@@ -606,7 +606,7 @@ final class CallService: CallServiceStateObserver, CallServiceStateDelegate {
             throw OWSGenericError("Can't join a call link that you've deleted.")
         }
         return _buildAndConnectGroupCall(isOutgoingVideoMuted: false) { () -> (SignalCall, CallLinkCall)? in
-            let videoCaptureController = VideoCaptureController()
+            let videoCaptureController = VideoCaptureController.makeSignalOptimized()
             let sfuUrl = DebugFlags.callingUseTestSFU.get() ? TSConstants.sfuTestURL : TSConstants.sfuURL
             let secretParams = CallLinkSecretParams.deriveFromRootKey(callLink.rootKey.bytes)
             let authCredentialPresentation = authCredential.present(callLinkParams: secretParams)
