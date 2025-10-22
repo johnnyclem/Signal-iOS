@@ -677,15 +677,18 @@ internal struct MediaGallerySections<Loader: MediaGallerySectionLoader, UpdateUs
 
                     if currentSectionIndex >= itemsBySection.count {
                         if hasFetchedMostRecent {
-                            // Ignore later attachments.
-                            owsAssertDebug(itemsBySection.count == 1, "should only be used in single-album page view")
+                            // Ignore later attachments once we've measured the newest content.
+                            owsAssertDebug(!itemsBySection.isEmpty,
+                                           "should have at least one loaded section when ignoring trailing attachments")
                             return
                         }
                         numNewlyLoadedLaterSections += loadLaterSections(batchSize: naiveRange.range.count,
                                                                          transaction: transaction)
                         if currentSectionIndex >= itemsBySection.count {
                             if hasFetchedMostRecent {
-                                owsAssertDebug(false, "ignoring attachment #\(i) \(resourceId) beyond the last section")
+                                // We may race with a concurrent load that already fetched the latest sections.
+                                owsAssertDebug(!itemsBySection.isEmpty,
+                                               "ignoring attachment beyond the last section after fetching most recent")
                                 return
                             }
                             owsFailDebug("attachment #\(i) \(resourceId) is beyond the last section")
