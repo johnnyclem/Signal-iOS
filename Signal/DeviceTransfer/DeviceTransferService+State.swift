@@ -23,7 +23,6 @@ extension DeviceTransferService {
             oldDevicePeerId: MCPeerID,
             manifest: DeviceTransferProtoManifest,
             receivedFileIds: [String],
-            skippedFileIds: [String],
             progress: Progress
         )
         case outgoing(
@@ -36,12 +35,11 @@ extension DeviceTransferService {
 
         func appendingFileId(_ fileId: String) -> TransferState {
             switch self {
-            case .incoming(let oldDevicePeerId, let manifest, let receivedFileIds, let skippedFileIds, let progress):
+            case .incoming(let oldDevicePeerId, let manifest, let receivedFileIds, let progress):
                 return .incoming(
                     oldDevicePeerId: oldDevicePeerId,
                     manifest: manifest,
                     receivedFileIds: receivedFileIds + [fileId],
-                    skippedFileIds: skippedFileIds,
                     progress: progress
                 )
             case .outgoing(let newDevicePeerId, let newDeviceCertificateHash, let manifest, let transferredFileIds, let progress):
@@ -58,30 +56,6 @@ extension DeviceTransferService {
             }
         }
 
-        func appendingSkippedFileId(_ fileId: String) -> TransferState {
-            switch self {
-            case .incoming(let oldDevicePeerId, let manifest, let receivedFileIds, let skippedFileIds, let progress):
-                return .incoming(
-                    oldDevicePeerId: oldDevicePeerId,
-                    manifest: manifest,
-                    receivedFileIds: receivedFileIds,
-                    skippedFileIds: skippedFileIds + [fileId],
-                    progress: progress
-                )
-            case .outgoing(let newDevicePeerId, let newDeviceCertificateHash, let manifest, let transferredFileIds, let progress):
-                owsFailDebug("unexpectedly tried to append a skipped file on outgoing")
-                return .outgoing(
-                    newDevicePeerId: newDevicePeerId,
-                    newDeviceCertificateHash: newDeviceCertificateHash,
-                    manifest: manifest,
-                    transferredFileIds: transferredFileIds,
-                    progress: progress
-                )
-            case .idle:
-                owsFailDebug("unexpectedly tried to append a skipped file while idle")
-                return .idle
-            }
-        }
     }
 
     enum TransferMode: String {

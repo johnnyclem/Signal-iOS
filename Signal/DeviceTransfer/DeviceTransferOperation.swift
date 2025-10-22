@@ -37,26 +37,7 @@ class DeviceTransferOperation: NSObject {
         var url = URL(fileURLWithPath: file.relativePath, relativeTo: DeviceTransferService.appSharedDataDirectory)
 
         if !OWSFileSystem.fileOrFolderExists(url: url) {
-            guard ![
-                DeviceTransferService.databaseWALIdentifier,
-                DeviceTransferService.databaseIdentifier
-            ].contains(file.identifier) else {
-                throw OWSAssertionError("Mandatory database file is missing for transfer")
-            }
-
-            Logger.warn("Missing file for transfer, it probably disappeared or was otherwise deleted. Sending missing file placeholder.")
-
-            url = URL(
-                fileURLWithPath: UUID().uuidString,
-                relativeTo: URL(fileURLWithPath: OWSTemporaryDirectory(), isDirectory: true)
-            )
-            guard FileManager.default.createFile(
-                atPath: url.path,
-                contents: DeviceTransferService.missingFileData,
-                attributes: nil
-            ) else {
-                throw OWSAssertionError("Failed to create temp file for missing file \(url)")
-            }
+            throw OWSAssertionError("Missing file for transfer \(file.relativePath)")
         }
 
         guard let sha256Digest = try? Cryptography.computeSHA256DigestOfFile(at: url) else {
