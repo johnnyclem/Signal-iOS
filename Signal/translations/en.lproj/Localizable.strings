@@ -175,8 +175,20 @@
 /* Menu option to limit All Media view to displaying only videos */
 "ALL_MEDIA_FILTER_VIDEOS" = "Videos";
 
+/* Label describing the select all progress indicator in the All Media view */
+"ALL_MEDIA_SELECT_ALL_PROGRESS_LABEL" = "Selecting… %1$d of %2$d";
+
+/* Accessibility label describing the select all progress indicator in the All Media view */
+"ALL_MEDIA_SELECT_ALL_PROGRESS_ACCESSIBILITY_LABEL" = "Selecting media";
+
+/* Accessibility value describing the select all progress indicator in the All Media view */
+"ALL_MEDIA_SELECT_ALL_PROGRESS_ACCESSIBILITY_VALUE" = "%1$d of %2$d selected";
+
 /* Menu option to show All Media items in a grid of square thumbnails */
 "ALL_MEDIA_GRID_MODE" = "Grid";
+
+/* Error message shown when preparing media for sharing fails in the All Media view */
+"ALL_MEDIA_SHARE_PREPARATION_FAILED" = "Unable to prepare media for sharing. Please try again.";
 
 /* Menu option to show All Media items in a single-column list */
 "ALL_MEDIA_LIST_MODE" = "List";
