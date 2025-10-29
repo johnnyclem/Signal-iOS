@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import CryptoKit
 import Foundation
 import MultipeerConnectivity
 import SignalServiceKit
@@ -76,9 +75,6 @@ class DeviceTransferService: NSObject {
     static let manifestIdentifier = "manifest"
     static let databaseIdentifier = "database"
     static let databaseWALIdentifier = "database-wal"
-
-    static let missingFileData = Data("Missing File".utf8)
-    static let missingFileHash = Data(SHA256.hash(data: missingFileData))
 
     // This must also be updated in the info.plist
     private static let newDeviceServiceIdentifier = "sgnl-new-device"
@@ -313,7 +309,7 @@ class DeviceTransferService: NSObject {
         switch transferState {
         case .idle:
             break
-        case .incoming(let oldDevicePeerId, _, _, _, _):
+        case .incoming(let oldDevicePeerId, _, _, _):
             try? sendBackgroundAppMessage(to: oldDevicePeerId)
             notifyObservers { $0.deviceTransferServiceDidEndTransfer(error: .backgroundedDevice) }
         case .outgoing(let newDevicePeerId, _, _, _, _):
@@ -483,7 +479,7 @@ class DeviceTransferService: NSObject {
 
         guard let progress: Progress = {
             switch transferState {
-            case .incoming(_, _, _, _, let progress):
+            case .incoming(_, _, _, let progress):
                 return progress
             case .outgoing(_, _, _, _, let progress):
                 return progress

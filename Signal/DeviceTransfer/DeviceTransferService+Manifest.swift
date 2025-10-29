@@ -195,7 +195,6 @@ extension DeviceTransferService {
             oldDevicePeerId: peerId,
             manifest: manifest,
             receivedFileIds: [DeviceTransferService.manifestIdentifier],
-            skippedFileIds: [],
             progress: progress
         )
 
